@@ -1,7 +1,7 @@
 import random
 from copy import copy
 import pygame
-
+import ipdb
 board_size = 5
 delivery_reward_multiplier = 3
 import time
@@ -135,6 +135,7 @@ class WarehouseEnv(object):
         self.num_steps -= 1
         robot = self.robots[robot_index]
         other_robot = self.robots[(robot_index + 1) % 2]
+        ipdb.set_trace()
         assert operator in self.get_legal_operators(robot_index)
         assert not self.num_steps < 0
         if operator == 'park':

@@ -1,3 +1,7 @@
+import time
+import ipdb
+from func_timeout import func_timeout, FunctionTimedOut
+
 from Agent import Agent, AgentGreedy
 from WarehouseEnv import WarehouseEnv, manhattan_distance
 import random
@@ -20,9 +24,32 @@ TIE_BREAKING_ORDER = [
 ]
 
 
-# TODO: section a : 3
 def smart_heuristic(env: WarehouseEnv, robot_id: int):
-    pass
+    robot = env.get_robot(robot_id)
+    other_robot = env.get_robot((robot_id + 1) % 2)
+    
+    #  Feature 1: Credit difference
+    credit_diff = robot.credit - other_robot.credit
+    
+    #  Feature 2: Distance to target (package or destination)
+    dist_to_target = 0
+    if robot.package is not None:
+        #  If holding a package, the target is the packages destination
+        dist_to_target = manhattan_distance(robot.position, robot.package.destination)
+    else:
+        #  If empty-handed, find the closest package currently on the board
+        packages_on_board = [p for p in env.packages if p.on_board]
+        if packages_on_board:
+            distances = [manhattan_distance(robot.position, p.position) for p in packages_on_board]
+            dist_to_target = min(distances)
+        else:
+            dist_to_target = 0
+            
+    #  Feature 3: Battery level
+    battery = robot.battery
+    
+    #  Calculate final heuristic value
+    return (2 * credit_diff) + (2 * battery) - (dist_to_target)
 
 
 # TODO: section b : fixed-depth helper for deterministic grading
@@ -44,8 +71,14 @@ def alphabeta_decision(env: WarehouseEnv, robot_id: int, depth: int, heuristic_f
     """
     raise NotImplementedError()
 
+def _successors(env: WarehouseEnv, robot_id: int):
+        operators = env.get_legal_operators(robot_id)
+        children = [env.clone()] * len(operators)
+        # ipdb.set_trace()
+        for child, op in zip(children, operators):
+            child.apply_operator(robot_id, op)
+        return operators, children
 
-# TODO: section d : fixed-depth helper for deterministic grading
 def expectimax_decision(env: WarehouseEnv, robot_id: int, depth: int, heuristic_fn=None):
     """
     Return the selected legal operator using depth-limited expectimax.
@@ -54,8 +87,60 @@ def expectimax_decision(env: WarehouseEnv, robot_id: int, depth: int, heuristic_
     If heuristic_fn is None, use smart_heuristic.
     Ties must be broken according to TIE_BREAKING_ORDER.
     """
-    raise NotImplementedError()
+    heuristic_fn = heuristic_fn or smart_heuristic
+    assert depth > 0 and not env.done()
+    # max of successors, selected by CHOOSE_ORDER
+    actions_values = [] # Action, value tuples
+    # iterate over every state and operator in the successors of the current state using zip
+    # ipdb.set_trace()
+    for operator, state in zip(*_successors(env, robot_id)):
+        next_robot_id = (robot_id + 1) % 2
+        value = _expectimax_value_expectation_node(state, next_robot_id, depth - 1, heuristic_fn)
+        actions_values.append((operator, value))
+    # Pick first action in TIE_BREAKING_ORDER that has the max value
+    max_value = max(value for _, value in actions_values)
+    best_actions = [action for action, value in actions_values if value == max_value]
+    # ipdb.set_trace()
+    for action in TIE_BREAKING_ORDER:
+        if action in best_actions:
+            return action
 
+
+def _expectimax_value_max_node(env: WarehouseEnv, robot_id: int, depth: int, heuristic_fn):
+    """
+    Return the value of a max node in the expectimax tree.
+    Calculated as the maximum value of the possible actions of robot_id."""
+    if depth == 0 or env.done():
+        return heuristic_fn(env, robot_id)
+    max_value = None
+    for _, state in zip(*_successors(env, robot_id)):
+        next_robot_id = (robot_id + 1) % 2
+        value = _expectimax_value_expectation_node(state, next_robot_id, depth - 1, heuristic_fn)
+        max_value = value if max_value is None else max(max_value, value)
+
+    assert max_value is not None, "There is always a legal operator."
+    return max_value
+
+
+def _expectimax_value_expectation_node(env: WarehouseEnv, robot_id: int, depth: int, heuristic_fn):
+    """
+    Return the value of an expectation node in the expectimax tree.
+    Calculated as the expected value based on the possible actions of robot_id and the action weights.
+    """
+    if depth == 0 or env.done():
+        return heuristic_fn(env, robot_id)
+    total_value = 0
+
+    operators = env.get_legal_operators(robot_id)
+    total_weight = sum(EXPECTIMAX_ACTION_WEIGHTS.get(operator, 1) for operator in operators)
+    assert total_weight > 0, "There is always a legal operator."
+
+    for op, state in zip(*_successors(env, robot_id)):
+        next_robot_id = (robot_id + 1) % 2
+        value = _expectimax_value_max_node(state, next_robot_id, depth - 1, heuristic_fn)
+        weight = EXPECTIMAX_ACTION_WEIGHTS.get(op, 1)
+        total_value += weight * value
+    return total_value / total_weight
 
 class AgentGreedyImproved(AgentGreedy):
     def heuristic(self, env: WarehouseEnv, robot_id: int):
@@ -75,10 +160,20 @@ class AgentAlphaBeta(Agent):
 
 
 class AgentExpectimax(Agent):
-    # TODO: section d : 3
     def run_step(self, env: WarehouseEnv, agent_id, time_limit):
-        raise NotImplementedError()
-
+        start = time.time()
+        time_remaining = time_limit
+        best_action = expectimax_decision(env, agent_id, 1, smart_heuristic)
+        # start running expectimax with increasing depth until time runs out.
+        depth = 2
+        while time_remaining > 0:
+            try:
+                time_remaining = time_limit - (time.time() - start)
+                best_action = func_timeout(time_remaining, expectimax_decision, args=(env, agent_id, depth, smart_heuristic))
+                depth += 1
+            except FunctionTimedOut:
+                break
+        return best_action
 
 # here you can check specific paths to get to know the environment
 class AgentHardCoded(Agent):
