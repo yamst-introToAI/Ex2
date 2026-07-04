@@ -1,10 +1,11 @@
 import time
+import random
+import math
 # import ipdb
 from func_timeout import func_timeout, FunctionTimedOut
 
 from Agent import Agent, AgentGreedy
 from WarehouseEnv import WarehouseEnv, manhattan_distance
-import random
 
 
 EXPECTIMAX_ACTION_WEIGHTS = {
@@ -45,32 +46,112 @@ def smart_heuristic(env: WarehouseEnv, robot_id: int):
         else:
             dist_to_target = 0
 
-    #  Feature 3: Battery level
+    #  Feature 3a: Battery level
     battery = robot.battery
-    package_bonus = 10 if robot.package is not None else 0
-
+    
+    # Feature 3b: Define a low battery tax that especially penalizes very low battery levels
+    low_battery_tax = max(0, 10 - battery * battery)
+    
+    # Feature 4: Bonus for having a package in hand, to help in a "flat" search space.
+    package_in_hand_bonus = 3 if robot.package is not None else 0
     #  Calculate final heuristic value
-    return (3 * credit_diff) + (0 * battery) + (package_bonus) - (dist_to_target)
+    return (4 * credit_diff) + (2 * battery) + (package_in_hand_bonus) - (dist_to_target) - (low_battery_tax) 
 
+################ DECISION FUNCTIONS ################
 
-# TODO: section b : fixed-depth helper for deterministic grading
+def _successors_mm(env: WarehouseEnv, robot_id: int):
+    operators = env.get_legal_operators(robot_id)
+    operators.sort(key=lambda op: TIE_BREAKING_ORDER.index(op) if op in TIE_BREAKING_ORDER else 999)
+    children = [env.clone() for _ in operators]
+    for child, op in zip(children, operators):
+        child.apply_operator(robot_id, op)
+    return operators, children
+
 def minimax_decision(env: WarehouseEnv, robot_id: int, depth: int, heuristic_fn=None):
-    """
-    Return the selected legal operator using depth-limited minimax.
-    If heuristic_fn is None, use smart_heuristic.
-    Ties must be broken according to TIE_BREAKING_ORDER.
-    """
-    raise NotImplementedError()
+    heuristic_fn = heuristic_fn or smart_heuristic
+    assert depth > 0 and not env.done()
+
+    max_value = -math.inf
+    best_op = None
+    for operator, state in zip(*_successors_mm(env, robot_id)):
+        next_robot_id = (robot_id + 1) % 2
+        value = _minimax_min_node(state, next_robot_id, depth - 1, heuristic_fn, robot_id)
+        if value > max_value:
+            max_value = value
+            best_op = operator
+    return best_op
+
+def _minimax_max_node(env: WarehouseEnv, current_robot_id: int, depth: int, heuristic_fn, original_robot_id: int,):
+    if depth == 0 or env.done():
+        return heuristic_fn(env, original_robot_id)
+
+    max_value = -math.inf
+    for _, state in zip(*_successors_mm(env, current_robot_id)):
+        next_robot_id = (current_robot_id + 1) % 2
+        value = _minimax_min_node(state, next_robot_id, depth - 1, heuristic_fn, original_robot_id)
+        max_value = max(max_value, value)
+    return max_value
 
 
-# TODO: section c : fixed-depth helper for deterministic grading
+def _minimax_min_node(env: WarehouseEnv, current_robot_id: int, depth: int, heuristic_fn, original_robot_id: int):
+    if depth == 0 or env.done():
+        return heuristic_fn(env, original_robot_id)
+
+    min_value = math.inf
+    for _, state in zip(*_successors_mm(env, current_robot_id)):
+        next_robot_id = (current_robot_id + 1) % 2
+        value = _minimax_max_node(state, next_robot_id, depth - 1, heuristic_fn, original_robot_id)
+        min_value = min(min_value, value)
+    return min_value
+
 def alphabeta_decision(env: WarehouseEnv, robot_id: int, depth: int, heuristic_fn=None):
-    """
-    Return the selected legal operator using depth-limited alpha-beta pruning.
-    If heuristic_fn is None, use smart_heuristic.
-    Ties must be broken according to TIE_BREAKING_ORDER.
-    """
-    raise NotImplementedError()
+    heuristic_fn = heuristic_fn or smart_heuristic
+    assert depth > 0 and not env.done()
+
+    max_value = -math.inf
+    best_op = None
+    alpha = -math.inf
+    beta = math.inf
+
+    for operator, state in zip(*_successors_mm(env, robot_id)):
+        next_robot_id = (robot_id + 1) % 2
+        value = _alphabeta_min_node(state, next_robot_id, depth - 1, heuristic_fn, robot_id, alpha, beta)
+        if value > max_value:
+            max_value = value
+            best_op = operator
+        alpha = max(alpha, max_value)
+    return best_op
+
+
+def _alphabeta_max_node(env: WarehouseEnv, current_robot_id: int, depth: int, heuristic_fn, original_robot_id: int,
+                        alpha: float, beta: float):
+    if depth == 0 or env.done():
+        return heuristic_fn(env, original_robot_id)
+
+    max_value = -math.inf
+    for _, state in zip(*_successors_mm(env, current_robot_id)):
+        next_robot_id = (current_robot_id + 1) % 2
+        value = _alphabeta_min_node(state, next_robot_id, depth - 1, heuristic_fn, original_robot_id, alpha, beta)
+        max_value = max(max_value, value)
+        alpha = max(alpha, max_value)
+        if max_value >= beta:
+            return max_value  # Prune
+    return max_value
+
+def _alphabeta_min_node(env: WarehouseEnv, current_robot_id: int, depth: int, heuristic_fn, original_robot_id: int,
+                        alpha: float, beta: float):
+    if depth == 0 or env.done():
+        return heuristic_fn(env, original_robot_id)
+
+    min_value = math.inf
+    for _, state in zip(*_successors_mm(env, current_robot_id)):
+        next_robot_id = (current_robot_id + 1) % 2
+        value = _alphabeta_max_node(state, next_robot_id, depth - 1, heuristic_fn, original_robot_id, alpha, beta)
+        min_value = min(min_value, value)
+        beta = min(beta, min_value)
+        if min_value <= alpha:
+            return min_value  # Prune
+    return min_value
 
 def _successors(env: WarehouseEnv, robot_id: int):
         operators = env.get_legal_operators(robot_id)
@@ -104,7 +185,6 @@ def expectimax_decision(env: WarehouseEnv, robot_id: int, depth: int, heuristic_
         if action in best_actions:
             return action
 
-
 def _expectimax_value_max_node(env: WarehouseEnv, robot_id: int, depth: int, heuristic_fn):
     """
     Return the value of a max node in the expectimax tree.
@@ -119,7 +199,6 @@ def _expectimax_value_max_node(env: WarehouseEnv, robot_id: int, depth: int, heu
 
     assert max_value is not None, "There is always a legal operator."
     return max_value
-
 
 def _expectimax_value_expectation_node(env: WarehouseEnv, robot_id: int, depth: int, heuristic_fn):
     """
@@ -141,22 +220,59 @@ def _expectimax_value_expectation_node(env: WarehouseEnv, robot_id: int, depth: 
         total_value += weight * value
     return total_value / total_weight
 
+################ DECISION FUNCTIONS ################
+
+########## AGENTS #########
 class AgentGreedyImproved(AgentGreedy):
     def heuristic(self, env: WarehouseEnv, robot_id: int):
         return smart_heuristic(env, robot_id)
 
-
 class AgentMinimax(Agent):
-    # TODO: section b : 4
     def run_step(self, env: WarehouseEnv, agent_id, time_limit):
-        raise NotImplementedError()
+        limit = time.time() + time_limit - 0.1
+        moves = env.get_legal_operators(agent_id)
+
+        moves.sort(key=lambda op: TIE_BREAKING_ORDER.index(op) if op in TIE_BREAKING_ORDER else 999)
+        best_action = moves[0]
+
+        try:
+            depth = 1
+            while time.time() < limit:
+                if depth > 2 * env.get_robot(agent_id).battery:
+                    break
+                args = (env, agent_id, depth, smart_heuristic)
+                op = func_timeout(time_limit - time.time(), minimax_decision, args=args)
+                if op is not None:
+                    best_action = op
+                depth += 1
+        except FunctionTimedOut:
+            pass
+
+        return best_action
 
 
 class AgentAlphaBeta(Agent):
-    # TODO: section c : 1
     def run_step(self, env: WarehouseEnv, agent_id, time_limit):
-        raise NotImplementedError()
+        limit = time.time() + time_limit - 0.1
+        moves = env.get_legal_operators(agent_id)
 
+        moves.sort(key=lambda op: TIE_BREAKING_ORDER.index(op) if op in TIE_BREAKING_ORDER else 999)
+        best_action = moves[0]
+
+        try:
+            depth = 1
+            while time.time() < limit:
+                if depth > 2 * env.get_robot(agent_id).battery:
+                    break
+                args = (env, agent_id, depth, smart_heuristic)
+                op = func_timeout(time_limit - time.time(), alphabeta_decision, args=args)
+                if op is not None:
+                    best_action = op
+                depth += 1
+        except FunctionTimedOut:
+            pass
+
+        return best_action
 
 class AgentExpectimax(Agent):
     def run_step(self, env: WarehouseEnv, agent_id, time_limit):
@@ -169,7 +285,8 @@ class AgentExpectimax(Agent):
         while time_remaining > 0:
             try:
                 time_remaining = time_limit - (time.time() - start)
-                best_action = func_timeout(time_remaining, expectimax_decision, args=(env, agent_id, depth, smart_heuristic))
+                args = (env, agent_id, depth, smart_heuristic)
+                best_action = func_timeout(time_remaining, expectimax_decision, args=args)
                 depth += 1
             except FunctionTimedOut:
                 break
