@@ -50,12 +50,13 @@ def smart_heuristic(env: WarehouseEnv, robot_id: int):
     battery = robot.battery
     
     # Feature 3b: Define a low battery tax that especially penalizes very low battery levels
-    low_battery_tax = max(0, 10 - battery * battery)
+    low_battery_tax = max(0, 10 - 0.5 * battery * battery)
     
     # Feature 4: Bonus for having a package in hand, to help in a "flat" search space.
-    package_in_hand_bonus = 3 if robot.package is not None else 0
+    package_bonus = 1 + manhattan_distance(robot.package.position, robot.package.destination) if robot.package is not None else 0
+    
     #  Calculate final heuristic value
-    return (4 * credit_diff) + (2 * battery) + (package_in_hand_bonus) - (dist_to_target) - (low_battery_tax) 
+    return (4 * credit_diff) + (2 * battery) + (package_bonus) - (dist_to_target) - (low_battery_tax) 
 
 ################ DECISION FUNCTIONS ################
 
