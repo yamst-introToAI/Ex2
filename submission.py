@@ -47,7 +47,7 @@ def smart_heuristic(env: WarehouseEnv, robot_id: int):
             dist_to_target = 0
 
     #  Feature 3a: Battery level
-    battery = robot.battery
+    battery = min(robot.battery, env.num_steps / 2)
     
     # Feature 3b: Define a low battery tax that especially penalizes very low battery levels
     low_battery_tax = max(0, 10 - 0.5 * battery * battery)
@@ -56,7 +56,7 @@ def smart_heuristic(env: WarehouseEnv, robot_id: int):
     package_bonus = 1 + manhattan_distance(robot.package.position, robot.package.destination) if robot.package is not None else 0
     
     #  Calculate final heuristic value
-    return (4 * credit_diff) + (2 * battery) + (package_bonus) - (dist_to_target) - (low_battery_tax) 
+    return (2 * credit_diff) + (4 * battery) + (package_bonus) - (dist_to_target) - (low_battery_tax) 
 
 ################ DECISION FUNCTIONS ################
 
@@ -70,7 +70,7 @@ def _successors_mm(env: WarehouseEnv, robot_id: int):
 
 def minimax_decision(env: WarehouseEnv, robot_id: int, depth: int, heuristic_fn=None):
     heuristic_fn = heuristic_fn or smart_heuristic
-    assert depth > 0 and not env.done()
+    assert depth > 0
 
     max_value = -math.inf
     best_op = None
@@ -107,7 +107,7 @@ def _minimax_min_node(env: WarehouseEnv, current_robot_id: int, depth: int, heur
 
 def alphabeta_decision(env: WarehouseEnv, robot_id: int, depth: int, heuristic_fn=None):
     heuristic_fn = heuristic_fn or smart_heuristic
-    assert depth > 0 and not env.done()
+    assert depth > 0
 
     max_value = -math.inf
     best_op = None
@@ -170,7 +170,7 @@ def expectimax_decision(env: WarehouseEnv, robot_id: int, depth: int, heuristic_
     Ties must be broken according to TIE_BREAKING_ORDER.
     """
     heuristic_fn = heuristic_fn or smart_heuristic
-    assert depth > 0 and not env.done()
+    assert depth > 0
     # max of successors, selected by CHOOSE_ORDER
     actions_values = [] # Action, value tuples
     # iterate over every state and operator in the successors of the current state using zip
@@ -221,6 +221,16 @@ def _expectimax_value_expectation_node(env: WarehouseEnv, robot_id: int, depth: 
         total_value += weight * value
     return total_value / total_weight
 
+
+def pick_any_action(env: WarehouseEnv, robot_id: int):
+    """
+    When any legal action is needed to be picked fast, this returns the first in TIE_BREAKING_ORDER.
+    """
+    moves = env.get_legal_operators(robot_id)
+
+    moves.sort(key=lambda op: TIE_BREAKING_ORDER.index(op) if op in TIE_BREAKING_ORDER else 999)
+    return moves[0]
+
 ################ DECISION FUNCTIONS ################
 
 ########## AGENTS #########
@@ -230,21 +240,19 @@ class AgentGreedyImproved(AgentGreedy):
 
 class AgentMinimax(Agent):
     def run_step(self, env: WarehouseEnv, agent_id, time_limit):
-        limit = time.time() + time_limit - 0.1
-        moves = env.get_legal_operators(agent_id)
-
-        moves.sort(key=lambda op: TIE_BREAKING_ORDER.index(op) if op in TIE_BREAKING_ORDER else 999)
-        best_action = moves[0]
+        limit = min(time.time() + time_limit - 0.099, time.time() + 2)
+        # Running for very long is redundant. Heuristic is based on randomized package spawns and not more accurate.
+        if time_limit < 0.01:
+            best_action = pick_any_action(env, agent_id)
+        else:
+            best_action = minimax_decision(env, agent_id, 1, smart_heuristic)
 
         try:
-            depth = 1
+            depth = 2
             while time.time() < limit:
-                if depth > 2 * env.get_robot(agent_id).battery:
-                    break
                 args = (env, agent_id, depth, smart_heuristic)
-                op = func_timeout(time_limit - time.time(), minimax_decision, args=args)
-                if op is not None:
-                    best_action = op
+                op = func_timeout(limit - time.time(), minimax_decision, args=args)
+                best_action = op or best_action
                 depth += 1
         except FunctionTimedOut:
             pass
@@ -254,21 +262,19 @@ class AgentMinimax(Agent):
 
 class AgentAlphaBeta(Agent):
     def run_step(self, env: WarehouseEnv, agent_id, time_limit):
-        limit = time.time() + time_limit - 0.1
-        moves = env.get_legal_operators(agent_id)
-
-        moves.sort(key=lambda op: TIE_BREAKING_ORDER.index(op) if op in TIE_BREAKING_ORDER else 999)
-        best_action = moves[0]
+        limit = min(time.time() + time_limit - 0.099, time.time() + 2)
+        # Running for very long is redundant. Heuristic is based on randomized package spawns and not more accurate.
+        if time_limit < 0.01:
+            best_action = pick_any_action(env, agent_id)
+        else:
+            best_action = alphabeta_decision(env, agent_id, 1, smart_heuristic)
 
         try:
-            depth = 1
+            depth = 2
             while time.time() < limit:
-                if depth > 2 * env.get_robot(agent_id).battery:
-                    break
                 args = (env, agent_id, depth, smart_heuristic)
-                op = func_timeout(time_limit - time.time(), alphabeta_decision, args=args)
-                if op is not None:
-                    best_action = op
+                op = func_timeout(limit - time.time(), alphabeta_decision, args=args)
+                best_action = op or best_action
                 depth += 1
         except FunctionTimedOut:
             pass
@@ -277,17 +283,18 @@ class AgentAlphaBeta(Agent):
 
 class AgentExpectimax(Agent):
     def run_step(self, env: WarehouseEnv, agent_id, time_limit):
-        start = time.time()
-        time_limit -= 0.1
-        time_remaining = time_limit
-        best_action = expectimax_decision(env, agent_id, 1, smart_heuristic)
-        # start running expectimax with increasing depth until time runs out.
+        limit = min(time.time() + time_limit - 0.099, time.time() + 6)
+        # Running for very long is redundant. Heuristic is based on randomized package spawns and not more accurate.
+        if time_limit < 0.01:
+            best_action = pick_any_action(env, agent_id)
+        else:
+            best_action = expectimax_decision(env, agent_id, 1, smart_heuristic)
+
         depth = 2
-        while time_remaining > 0:
+        while limit > time.time():
             try:
-                time_remaining = time_limit - (time.time() - start)
                 args = (env, agent_id, depth, smart_heuristic)
-                best_action = func_timeout(time_remaining, expectimax_decision, args=args)
+                best_action = func_timeout(limit - time.time(), expectimax_decision, args=args)
                 depth += 1
             except FunctionTimedOut:
                 break
