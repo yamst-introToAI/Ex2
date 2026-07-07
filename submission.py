@@ -60,6 +60,15 @@ def smart_heuristic(env: WarehouseEnv, robot_id: int):
 
 ################ DECISION FUNCTIONS ################
 
+def pick_any_action(env: WarehouseEnv, robot_id: int):
+    """
+    When any legal action is needed to be picked fast, this returns the first in TIE_BREAKING_ORDER.
+    """
+    moves = env.get_legal_operators(robot_id)
+
+    moves.sort(key=lambda op: TIE_BREAKING_ORDER.index(op) if op in TIE_BREAKING_ORDER else 999)
+    return moves[0]
+
 def _successors_mm(env: WarehouseEnv, robot_id: int):
     operators = env.get_legal_operators(robot_id)
     operators.sort(key=lambda op: TIE_BREAKING_ORDER.index(op) if op in TIE_BREAKING_ORDER else 999)
@@ -70,7 +79,8 @@ def _successors_mm(env: WarehouseEnv, robot_id: int):
 
 def minimax_decision(env: WarehouseEnv, robot_id: int, depth: int, heuristic_fn=None):
     heuristic_fn = heuristic_fn or smart_heuristic
-    assert depth > 0
+    if depth <= 0:
+        return pick_any_action(env, robot_id)
 
     max_value = -math.inf
     best_op = None
@@ -107,7 +117,8 @@ def _minimax_min_node(env: WarehouseEnv, current_robot_id: int, depth: int, heur
 
 def alphabeta_decision(env: WarehouseEnv, robot_id: int, depth: int, heuristic_fn=None):
     heuristic_fn = heuristic_fn or smart_heuristic
-    assert depth > 0
+    if depth <= 0:
+        return pick_any_action(env, robot_id)
 
     max_value = -math.inf
     best_op = None
@@ -170,7 +181,8 @@ def expectimax_decision(env: WarehouseEnv, robot_id: int, depth: int, heuristic_
     Ties must be broken according to TIE_BREAKING_ORDER.
     """
     heuristic_fn = heuristic_fn or smart_heuristic
-    assert depth > 0
+    if depth <= 0:
+        return pick_any_action(env, robot_id)
     # max of successors, selected by CHOOSE_ORDER
     actions_values = [] # Action, value tuples
     # iterate over every state and operator in the successors of the current state using zip
@@ -221,16 +233,6 @@ def _expectimax_value_expectation_node(env: WarehouseEnv, robot_id: int, depth: 
         total_value += weight * value
     return total_value / total_weight
 
-
-def pick_any_action(env: WarehouseEnv, robot_id: int):
-    """
-    When any legal action is needed to be picked fast, this returns the first in TIE_BREAKING_ORDER.
-    """
-    moves = env.get_legal_operators(robot_id)
-
-    moves.sort(key=lambda op: TIE_BREAKING_ORDER.index(op) if op in TIE_BREAKING_ORDER else 999)
-    return moves[0]
-
 ################ DECISION FUNCTIONS ################
 
 ########## AGENTS #########
@@ -240,10 +242,10 @@ class AgentGreedyImproved(AgentGreedy):
 
 class AgentMinimax(Agent):
     def run_step(self, env: WarehouseEnv, agent_id, time_limit):
-        limit = min(time.time() + time_limit - 0.099, time.time() + 2)
+        limit = min(time.time() + time_limit - 0.16, time.time() + 2)
         # Running for very long is redundant. Heuristic is based on randomized package spawns and not more accurate.
         if time_limit < 0.01:
-            best_action = pick_any_action(env, agent_id)
+            return pick_any_action(env, agent_id)
         else:
             best_action = minimax_decision(env, agent_id, 1, smart_heuristic)
 
@@ -262,10 +264,10 @@ class AgentMinimax(Agent):
 
 class AgentAlphaBeta(Agent):
     def run_step(self, env: WarehouseEnv, agent_id, time_limit):
-        limit = min(time.time() + time_limit - 0.099, time.time() + 2)
+        limit = min(time.time() + time_limit - 0.16, time.time() + 2)
         # Running for very long is redundant. Heuristic is based on randomized package spawns and not more accurate.
         if time_limit < 0.01:
-            best_action = pick_any_action(env, agent_id)
+            return pick_any_action(env, agent_id)
         else:
             best_action = alphabeta_decision(env, agent_id, 1, smart_heuristic)
 
@@ -283,10 +285,10 @@ class AgentAlphaBeta(Agent):
 
 class AgentExpectimax(Agent):
     def run_step(self, env: WarehouseEnv, agent_id, time_limit):
-        limit = min(time.time() + time_limit - 0.099, time.time() + 6)
+        limit = min(time.time() + time_limit - 0.16, time.time() + 4)
         # Running for very long is redundant. Heuristic is based on randomized package spawns and not more accurate.
         if time_limit < 0.01:
-            best_action = pick_any_action(env, agent_id)
+            return pick_any_action(env, agent_id)
         else:
             best_action = expectimax_decision(env, agent_id, 1, smart_heuristic)
 
