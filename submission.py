@@ -242,13 +242,13 @@ class AgentGreedyImproved(AgentGreedy):
 
 class AgentMinimax(Agent):
     def run_step(self, env: WarehouseEnv, agent_id, time_limit):
-        limit = min(time.time() + time_limit - 0.16, time.time() + 2)
-        # Running for very long is redundant. Heuristic is based on randomized package spawns and not more accurate.
-        if time_limit < 0.01:
+        if time_limit < 0.02:
             return pick_any_action(env, agent_id)
         else:
             best_action = minimax_decision(env, agent_id, 1, smart_heuristic)
-
+        margin = max(0.17, time_limit * 0.3)  # Ensure a minimum margin of 0.17 seconds
+        limit = min(time.time() + time_limit - margin, time.time() + 2)
+        # Running for very long is redundant. Heuristic is based on randomized package spawns and not more accurate.
         try:
             depth = 2
             while time.time() < limit:
@@ -264,12 +264,13 @@ class AgentMinimax(Agent):
 
 class AgentAlphaBeta(Agent):
     def run_step(self, env: WarehouseEnv, agent_id, time_limit):
-        limit = min(time.time() + time_limit - 0.16, time.time() + 2)
-        # Running for very long is redundant. Heuristic is based on randomized package spawns and not more accurate.
-        if time_limit < 0.01:
+        if time_limit < 0.02:
             return pick_any_action(env, agent_id)
         else:
             best_action = alphabeta_decision(env, agent_id, 1, smart_heuristic)
+        margin = max(0.17, time_limit * 0.3)  # Ensure a minimum margin of 0.17 seconds
+        limit = min(time.time() + time_limit - margin, time.time() + 2)
+        # Running for very long is redundant. Heuristic is based on randomized package spawns and not more accurate.
 
         try:
             depth = 2
@@ -285,12 +286,12 @@ class AgentAlphaBeta(Agent):
 
 class AgentExpectimax(Agent):
     def run_step(self, env: WarehouseEnv, agent_id, time_limit):
-        limit = min(time.time() + time_limit - 0.16, time.time() + 4)
-        # Running for very long is redundant. Heuristic is based on randomized package spawns and not more accurate.
-        if time_limit < 0.01:
+        if time_limit < 0.02:
             return pick_any_action(env, agent_id)
         else:
             best_action = expectimax_decision(env, agent_id, 1, smart_heuristic)
+        margin = max(0.17, time_limit * 0.3)  # Ensure a minimum margin of 0.17 seconds
+        limit = min(time.time() + time_limit - margin, time.time() + 4)
 
         depth = 2
         while limit > time.time():
